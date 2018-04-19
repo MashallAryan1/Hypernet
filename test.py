@@ -6,7 +6,7 @@ set_random_seed(2)
 from numpy.random import seed
 seed(1)
 modes= ['basic', 'deep_implicit', 'bayes_by_gaussian_dropout']
-models = [GAN, WGAN_gp]
+models = [WGAN_gp,] #[GAN, WGAN_gp]
 num_hiddens = [3,5,8]
 
 # gan = WGAN_gp( g_input_dim = 2, g_num_hidden= 5, g_hidden_dim = 10, g_out_dim = 2 , c_num_hidden = 4, c_hidden_dim=30 ,sample_size= 64, mode='deep_implicit')
@@ -17,7 +17,7 @@ def run(directory, model_type , num_hidden,mode):
     if not os.path.exists(directory):
         os.makedirs(directory)
     gan = model_type( g_input_dim = 2, g_num_hidden= num_hidden, g_hidden_dim = 10, g_out_dim = 2 , c_num_hidden =num_hidden, c_hidden_dim=20 ,sample_size= 64, mode=mode)
-    for iii in range(10):
+    for iii in range(30):
         n_c_pretrain=50
         if iii == 0:
             n_c_pretrain=100

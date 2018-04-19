@@ -100,23 +100,23 @@ class GAN(object):
         dropout_rate = 0.1
         h = Dense(c_hidden_dim, kernel_initializer='he_normal', kernel_regularizer=l1_l2(1e-5, 1e-5), name='C_h_1')(x)
         h = LeakyReLU()(h)
-        h = Dropout(dropout_rate)(h)
+        # h = Dropout(dropout_rate)(h)
 
         for i in range(c_num_hidden - 1):
             h = Dense(c_hidden_dim, kernel_initializer='he_normal',  kernel_regularizer=l1_l2(1e-5, 1e-5),name='C_h_{}'.format(i + 2))(h)
             h = LeakyReLU()(h)
-            h = Dropout(dropout_rate)(h)
+            # h = Dropout(dropout_rate)(h)
         output = Dense(1, name='C_out')(h)
         output = Activation('sigmoid')(output)
         return Model(inputs=x, outputs=output, name="C")
 
     @staticmethod
     def c_optimizer():
-        return Adam(0.01, beta_1=0.5, beta_2=0.9)
+        return Adam(0.002, beta_1=0.5, beta_2=0.9)
 
     @staticmethod
     def g_optmizer():
-        return Adam(0.01, beta_1=0.5, beta_2=0.9)
+        return Adam(0.002, beta_1=0.5, beta_2=0.9)
 
     def prepair(self):
         # generator weights
@@ -234,11 +234,11 @@ class WGAN_gp(GAN):
 
     @staticmethod
     def c_optimizer():
-        return Adam(0.01, beta_1=0.5, beta_2=0.9)
+        return Adam(0.002, beta_1=0.5, beta_2=0.9)
 
     @staticmethod
     def g_optmizer():
-        return Adam(0.01, beta_1=0.5, beta_2=0.9)
+        return Adam(0.002, beta_1=0.5, beta_2=0.9)
 
     @staticmethod
     def build_critic(c_input_dim, c_num_hidden, c_hidden_dim, mode):
