@@ -7,11 +7,14 @@ from tqdm import tqdm
 from utils import *
 from functools import partial
 
+layer_type = {'basic': 'basic', 'deep_implicit': 'deep_st', 'bayes_by_gaussian_dropout': 'gaussian',
+              'deepst_n_gaussian': 'deepst_n_gaussian'}
+
+
 class GAN(object):
     """
        Basic Generative Adversarial Network
     """
-
     def __init__(self, g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim, c_num_hidden, c_hidden_dim, sample_size=64,
                  mode='bayes_by_gaussian_dropout'):
         """
@@ -31,81 +34,19 @@ class GAN(object):
         self.sample_real=self._sample_real
 
 
-    @staticmethod
-    def build_gen_basic(g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim):
-        z = Input(shape=(g_input_dim,))
-        h = Dense(g_hidden_dim, kernel_regularizer=l1_l2(1e-5, 1e-5), name='G_h_1')(z)
-        h = LeakyReLU()(h)
-        # h = Activation('tanh')(h)
-        for i in range(g_num_hidden - 2):
-            h = Dense(g_hidden_dim, kernel_regularizer=l1_l2(1e-5, 1e-5), name='G_h_{}'.format(i + 2))(h)
-            h = LeakyReLU()(h)
-        # h = Activation('tanh')(h)
-        x = Dense(g_out_dim, name='G_out')(h)
-
-        return Model(inputs=z, outputs=x, name="G")
-
-    @staticmethod
-    def build_gen_dpimp(g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim):
-        z = Input(shape=(g_input_dim,))
-        h = Dense(g_hidden_dim, kernel_regularizer=l1_l2(1e-5, 1e-5), name='G_h_1')(z)
-        h = LeakyReLU()(h)
-        # h = Activation('tanh')(h)
-
-        for i in range(g_num_hidden - 2):
-
-            h= Lambda(lambda x: K.concatenate( [x,K.random_normal(shape=K.shape(x), mean=0, stddev=1)]) )(h)
-            h = Dense(g_hidden_dim, kernel_regularizer=l1_l2(1e-5, 1e-5), name='G_h_{}'.format(i + 2))(h)
-            h = LeakyReLU()(h)
-            # h = Activation('tanh')(h)
-        h = Lambda(lambda x: K.concatenate( [x, K.random_normal(shape=K.shape(x), mean=0, stddev=1)]),)(h)
-        x = Dense(g_out_dim, name='G_out')(h)
-
-        return Model(inputs=z, outputs=x, name="G")
-
-    @staticmethod
-    def build_gen_bgdo(g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim):
-        epsilon_std = 0.1
-        z = Input(shape=(g_input_dim,))
-        h = Dense(g_hidden_dim, name='G_h_1'.format(1))(z)
-        # h = Activation('tanh')(h)
-        h = LeakyReLU()(h)
-
-        for i in range(g_num_hidden - 2):
-            h_mean = Dense(g_hidden_dim, name='G_h_{}'.format(i + 2))(h)
-            h__log_var = Dense(g_hidden_dim, name='G_h_logvar{}'.format(i + 2))(h)
-            h =Lambda(sampling, output_shape=(g_hidden_dim,), arguments={'dim': g_hidden_dim,'epsilon_std':epsilon_std}, name='G_h{}_st'.format(i + 2))([h_mean, h__log_var])
-            # h = Activation('tanh')(h)
-            h = LeakyReLU()(h)
-        h_mean = Dense(g_out_dim, kernel_regularizer=l1_l2(1e-5, 1e-5), name='G_out_mean')(h)
-        h__log_var = Dense(g_out_dim, kernel_regularizer=l1_l2(1e-5, 1e-5), name='G_out_logvar')(h)
-        x = Lambda(sampling, output_shape=(g_out_dim,), arguments={'dim': g_out_dim, 'epsilon_std': epsilon_std},
-                   name='G_out')([h_mean, h__log_var])
-        # x = Dense(g_out_dim, name='G_out')(h)
-
-        return Model(inputs=z, outputs=x, name="G")
-
     def build_generator(self,g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim, mode):
-        if mode == 'basic':
-            return self.build_gen_basic(g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim)
-        elif mode == 'deep_implicit':
-            return self.build_gen_dpimp(g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim)
-        elif mode == 'bayes_by_gaussian_dropout':
-            return self.build_gen_bgdo(g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim)
+        z = Input(shape=(g_input_dim,))
+        h = Hidden(ltype=layer_type[mode], kernel_regularizer =( lambda : l1_l2(1e-5, 1e-5)),batch_norm=True)(inputs=z, dims=[ g_hidden_dim]*g_num_hidden, name_prefix ='G_h')
+        x = Dense(g_out_dim, name='G_out')(h)
+
+        return Model(inputs=z, outputs=x, name="G")
 
 
     @staticmethod
     def build_critic(c_input_dim, c_num_hidden, c_hidden_dim, mode):
         x = Input(shape=(c_input_dim,))
-        dropout_rate = 0.1
-        h = Dense(c_hidden_dim, kernel_initializer='he_normal', kernel_regularizer=l1_l2(1e-5, 1e-5), name='C_h_1')(x)
-        h = LeakyReLU()(h)
-        # h = Dropout(dropout_rate)(h)
-
-        for i in range(c_num_hidden - 1):
-            h = Dense(c_hidden_dim, kernel_initializer='he_normal',  kernel_regularizer=l1_l2(1e-5, 1e-5),name='C_h_{}'.format(i + 2))(h)
-            h = LeakyReLU()(h)
-            # h = Dropout(dropout_rate)(h)
+        dropout_rate = 0.2
+        h = Hidden(ltype=layer_type['basic'], kernel_regularizer =( lambda : l1_l2(1e-5, 1e-5)),batch_norm=False, dropout_rate=dropout_rate )(inputs=x, dims=[ c_hidden_dim]*c_num_hidden, name_prefix ='C_h')
         output = Dense(1, name='C_out')(h)
         output = Activation('sigmoid')(output)
         return Model(inputs=x, outputs=output, name="C")
@@ -227,7 +168,7 @@ class GAN(object):
 class WGAN_gp(GAN):
 
     def __init__(self, g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim, c_num_hidden, c_hidden_dim, sample_size=64,
-                 mode='gan'):
+                 mode='bayes_by_gaussian_dropout'):
         self.RandomWeightedAverage = partial(RandomWeightedAverage, sample_size=sample_size)
         super().__init__(g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim, c_num_hidden, c_hidden_dim, sample_size,
                          mode)
@@ -242,18 +183,21 @@ class WGAN_gp(GAN):
 
     @staticmethod
     def build_critic(c_input_dim, c_num_hidden, c_hidden_dim, mode):
+        dropout_rate = 0.1
         x = Input(shape=(c_input_dim,))
-        # h = Dense(c_hidden_dim,  kernel_initializer='he_normal', name='C_h_1')(x)
-        h = Dense(c_hidden_dim, kernel_regularizer=l1_l2(1e-4, 1e-4), kernel_initializer='he_normal', name='C_h_1')(x)
-        h = LeakyReLU()(h)
+        h = Hidden(ltype=layer_type['basic'], kernel_regularizer =( lambda : l1_l2(1e-3, 1e-3)),batch_norm=False, dropout_rate=dropout_rate )(inputs=x, dims=[ c_hidden_dim]*c_num_hidden, name_prefix ='C_h')
 
-        for i in range(c_num_hidden - 1):
-            # h = Dense(c_hidden_dim,  kernel_initializer='he_normal',
-            #           name='C_h_{}'.format(i + 2))(h)
-            h = Dense(c_hidden_dim, kernel_regularizer=l1_l2(1e-4, 1e-4), kernel_initializer='he_normal',
-                      name='C_h_{}'.format(i + 2))(h)
-            h = LeakyReLU()(h)
-            h = Dropout(0.2)(h)
+        # h = Dense(c_hidden_dim,  kernel_initializer='he_normal', name='C_h_1')(x)
+        # h = Dense(c_hidden_dim, kernel_regularizer=l1_l2(1e-4, 1e-4), kernel_initializer='he_normal', name='C_h_1')(x)
+        # h = LeakyReLU()(h)
+        #
+        # for i in range(c_num_hidden - 1):
+        #     # h = Dense(c_hidden_dim,  kernel_initializer='he_normal',
+        #     #           name='C_h_{}'.format(i + 2))(h)
+        #     h = Dense(c_hidden_dim, kernel_regularizer=l1_l2(1e-4, 1e-4), kernel_initializer='he_normal',
+        #               name='C_h_{}'.format(i + 2))(h)
+        #     h = LeakyReLU()(h)
+        #     h = Dropout(0.2)(h)
         output = Dense(1, name='C_out')(h)
         return Model(inputs=x, outputs=output, name="C")
 
