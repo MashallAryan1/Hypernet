@@ -1,52 +1,124 @@
-from keras.layers import Dense, LeakyReLU, Activation
-from keras.layers import Input, Activation, BatchNormalization, Lambda, Dropout, Concatenate, Reshape, Dot , Concatenate, Add
+import tensorflow as tf
+from keras.layers import LeakyReLU, Activation, BatchNormalization, Input, Dense, Dropout, Concatenate, Lambda
 from keras.models import Sequential, Model
-from keras.optimizers import Adam, SGD
-from keras.regularizers import l1_l2
-from keras.losses import binary_crossentropy, mean_squared_error
+import keras.backend as K
+import numpy as np
 from tqdm import tqdm
-from utils import *
-from functools import partial
+from  utils import *
 
 
-LAYER_TYPES = {'basic': 'basic', 'deep_implicit': 'deep_st', 'bayes_by_gaussian_dropout': 'gaussian',
-              'deepst_n_gaussian': 'deepst_n_gaussian'}
+
+LAYER_TYPES = ('DENSE', 'DEEP_IMPLICIT',)
+
+
+class Network(object):
+    def __init__(self, h_type='DENSE', activation='leakyrelu', output_activation=None, kernel_regularizer=None,
+                 batch_norm=True,
+                 dropout_rate=0.0):
+        self.h_layer_type = h_type
+        self.activation = activation
+        self.batch_norm = batch_norm
+        self.dropout_rate = dropout_rate
+        self.kernel_regularizer = kernel_regularizer
+        self.output_activation = output_activation
+
+    def fully_connected(self, dims, name_prefix):
+
+        inputs = Input(shape=(dims[0],))
+        for i, dim in enumerate(dims[1:-1]):
+            # first layer
+            if i == 0:
+                h = Dense(dim, kernel_regularizer=self.kernel_regularizer(),
+                          name=name_prefix + '_{}'.format(i))(inputs)
+                if self.batch_norm:
+                    h = BatchNormalization(name=name_prefix + '_BtNorm_{}'.format(i))(h)
+                h = transfer(self.activation, h)
+                if self.dropout_rate > 0:
+                    h = Dropout(self.dropout_rate)(h)
+                continue
+
+            # hidden layers
+            h = Dense(dim, kernel_regularizer=self.kernel_regularizer(),
+                      name=name_prefix + '_{}'.format(i))(h)
+            if self.batch_norm:
+                h = BatchNormalization(name=name_prefix + '_BtNorm_{}'.format(i))(h)
+            h = transfer(self.activation, h)
+            if self.dropout_rate > 0:
+                h = Dropout(self.dropout_rate)(h)
+        # output layer
+        out = Dense(dims[-1], kernel_regularizer=self.kernel_regularizer(),
+                    name=name_prefix + '_{}'.format(len(dims)))(h)
+        if  self.output_activation is not None:
+            out = transfer(self.output_activation, out)
+        return Model(inputs=inputs, outputs=out)
+
+    def deep_implicit(self, dims, name_prefix, epsilon_stddev=1.0,):
+        rand = True
+        inputs = Input(shape=(dims[0],))
+        for i, dim in enumerate(dims[1:-1]):
+            rand = not rand
+            if i == 0:
+                h = Dense(dim, kernel_regularizer=self.kernel_regularizer(), name=name_prefix + '_{}'.format(i))(inputs)
+                if self.batch_norm:
+                    h = BatchNormalization()(h)
+                h = transfer(self.activation, h)
+                continue
+            if rand:
+                h = Lambda(lambda x: K.concatenate([x, K.random_normal(shape=K.shape(x), mean=0, stddev=epsilon_stddev)]))(h)
+            h = Dense(dim, kernel_regularizer=self.kernel_regularizer(), name=name_prefix + '_{}'.format(i))(h)
+            if self.batch_norm:
+                h = BatchNormalization()(h)
+            h = transfer(self.activation, h)
+        # last layer
+        if not rand:
+            h = Lambda(lambda x: K.concatenate([x, K.random_normal(shape=K.shape(x), mean=0, stddev=epsilon_stddev)]))(h)
+        out = Dense(dims[-1], kernel_regularizer=self.kernel_regularizer(),
+                    name=name_prefix + '_{}'.format(len(dims)))(h)
+
+        if self.output_activation is not None:
+            out = transfer(self.output_activation, out)
+
+        return Model(inputs=inputs, outputs=out)
+
+    def __call__(self, dims, name_prefix='Layer', **kwargs):
+        lt = self.h_layer_type.upper()
+
+        if lt == 'DENSE':
+            return self.fully_connected(dims, name_prefix)
+        elif lt == 'DEEP_IMPLICIT':
+            return self.deep_implicit(dims, name_prefix, epsilon_stddev=kwargs.get('epsilon_stddev', 1.0))
 
 
 class GAN(object):
     """
        Basic Generative Adversarial Network
     """
-    def __init__(self, g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim, c_num_hidden, c_hidden_dim, sample_size=64,
-                 mode='bayes_by_gaussian_dropout'):
+
+    def __init__(self, g_config, c_config, noise_sample_size=64, real_samples=None, fake_label=0, real_label=1):
         """
-        :param g_input_dim : (int) input dimensionality of the generator
-        :param g_num_hidden : (int) number of hidden layers for the generator
-        :param g_hidden_dim : (int) number of hidden units for the hidden layers of the generator
-        :param c_num_hidden : (int) number of hidden layers for the critic/discriminator
-        :param c_hidden_dim : (int) number of hidden units for the hidden layers of critic
-        :param sample_size :(int) number of noise samples in the input of the generator
-        :param mode: (str from LAYER_TYPES) generator type
+        :param g_config : (dictionary) Containing the configuration of the generator, keys:
+                          "type" : (string) from the list of LAYER_TYPES
+                          "dims" : structure of the genarator e.g. [2,3,2] is a generator with 2d input a hidden layer with 3 hidden units and 2 output units
+                          "activation": (string) activation for the hidden units
+                          "output_activation":(string or None) activation function of the output layer
+                          "batch_norm": (boolean) indicate the presence/absence of batch normalization layer
+                          "optimizer" ": optimization algorithm for the generator
+        :param c_config : (dictionary) Containing the configuration of the critic (similar to the g_config)
+        :param noise_sample_size :(int) number of noise samples in the input of the generator
 
         """
-        self.g_input_dim = g_input_dim
-        self.g_num_hidden = g_num_hidden
-        self.g_hidden_dim = g_hidden_dim
-        self.g_out_dim = g_out_dim
-        self.c_num_hidden = c_num_hidden
-        self.c_hidden_dim = c_hidden_dim
-        self.sample_size = sample_size
-        self.mode = mode
-        # self.g_optmizer = self.c_optimizer = (lambda : Adam(0.002, beta_1=0.5, beta_2=0.9))
-        # set the optimizers for generator and descriminator
-        self.c_optimizer = (lambda : Adam(0.002, beta_1=0.5, beta_2=0.9))
-        self.g_optimizer = (lambda : Adam(0.005, beta_1=0.5, beta_2=0.9))
+        self.g_config = g_config
+        self.c_config = c_config
+        assert (self.c_config['dims'][0] == self.g_config['dims'][-1])
+        self.noise_sample_size = noise_sample_size
+        self.real_samples = real_samples.sample(self.noise_sample_size)
+        if self.real_samples is None:
+            self.real_samples = K.random_normal(shape=(self.noise_sample_size, self.c_config["dims"][0]), mean=0.0, stddev=1.0)
+
+        self.init_model()
         # set the distribution/model that generates the real samples for the critic. (prior)
-        self.sample_real = (lambda sample_size: np.random.multivariate_normal(mean=np.zeros(shape=(self.g_out_dim,)), cov=4*np.eye(self.g_out_dim), size=sample_size ))
         self.performance_log = {'critic': [], 'generator': []}
-        # build and initialize the generator and critic networks
-        self.build_model()
-
+        self.fake_label, self.real_label = fake_label,real_label
 
 
     def build_generator(self):
@@ -54,91 +126,135 @@ class GAN(object):
         Create an generator
         :return: a generator z-x model of type LAYER_TYPES[self.mode]
         """
-        z = Input(shape=(self.g_input_dim,))
-        h = Hidden(ltype=LAYER_TYPES[self.mode], kernel_regularizer =(lambda : l1_l2(1e-5, 1e-5)), batch_norm=True)(inputs=z, dims=[self.g_hidden_dim] * self.g_num_hidden, name_prefix ='G_h')
-        x = Dense(self.g_out_dim, name='G_out')(h)
-
-        return Model(inputs=z, outputs=x, name="G")
-
-
-    def build_critic(self,):
-        """
-        Create a discriminator
-        :return: discriminator model x->label
-        """
-        x = Input(shape=(self.g_out_dim,))
-        dropout_rate = 0.1
-        h = Hidden(ltype=LAYER_TYPES['basic'], kernel_regularizer =(lambda : l1_l2(1e-5, 1e-5)), batch_norm=False, dropout_rate=dropout_rate)(inputs=x, dims=[self.c_hidden_dim] * self.c_num_hidden, name_prefix ='C_h')
-        output = Dense(1, name='C_out')(h)
-        output = Activation('sigmoid')(output)
-        return Model(inputs=x, outputs=output, name="C")
-
-
-    def prepair(self):
-        """
-        create  generator, discriminator and their non-trainable versions
-        :return: generator self.g_model, discriminator  self.c_model, non-trainable generator self.g_freezed,
-                non-trainable discriminator
-        """
-
+        cnet = Network(h_type=self.g_config['h_type'],
+                       activation=self.g_config['activation'],
+                       output_activation=self.g_config['output_activation'],
+                       kernel_regularizer=self.g_config['kernel_regularizer'],
+                       batch_norm=self.g_config['batch_norm'],
+                       dropout_rate=self.g_config['dropout_rate'])
         # generator weights
-        generator = self.build_generator()
-        # generator.summary()
+        if self.g_config['h_type'] == 'DEEP_IMPLICIT' :
+            generator = cnet(dims=self.g_config['dims'],sample_size=self.noise_sample_size, name_prefix='G')
+        else:
+            generator = cnet(dims=self.g_config['dims'], name_prefix='G')
+        self.g_model = Sequential([generator], name="G_trainable")
+        # non-trainable generator
+        self.g_freezed = Sequential([generator], name="G_freezed")
+        self.g_freezed.trainable = False
+
+
+    def build_critic(self):
+        cnet = Network(h_type=self.c_config['h_type'],
+                       activation=self.c_config['activation'],
+                       output_activation=self.c_config['output_activation'],
+                       kernel_regularizer=self.c_config['kernel_regularizer'],
+                       batch_norm=self.c_config['batch_norm'],
+                       dropout_rate=self.c_config['dropout_rate'])
         # critic weights
-        critic = self.build_critic()
-        # generator model
-        self.g_model = Sequential([generator])
+        critic = cnet(dims=self.c_config['dims'], name_prefix='C')
         # trainable critic
-        self.c_model = Sequential([critic])
+        self.c_model = Sequential([critic], name="C_trainable")
         # non-trainable critic
         self.c_freezed = Sequential([critic], name="C_freezed")
         self.c_freezed.trainable = False
-        # non-trainable generator
-        self.g_freezed = Sequential([generator])
-        self.g_freezed.trainable = False
 
-    def build_gan_model(self):
+
+
+    def noise(self):
+        return K.random_normal((self.noise_sample_size, self.g_config['dims'][0]))
+
+    def init_model(self):
+        """
+        create  generator, discriminator and their non-trainable versions
+        Put everything together to build the GAN
+        :return: generator self.g_model, discriminator  self.c_model, non-trainable generator self.g_freezed,
+                non-trainable discriminator
+        """
+        # noise input
+        z = self.noise()
+
+        self.build_generator()
+        self.build_critic()
+
+        # create a model to train generator
+        self.build_gan_model(z)
+
+        self.compile_g()
+        # create a model to train the critic
+        self.build_critic_model(z,self.real_samples)
+        self.compile_c()
+
+
+    def build_gan_model(self,z_tensor):
         """
          wire up generator and non-trainable discriminator/critic to  train generator
         :return: trainable GAN model self.gan_model_tg
         """
         ### model to train generator###
-        self.gan_model_tg = Sequential([self.g_model, self.c_freezed])
-        self.gan_model_tg.compile(optimizer=self.g_optimizer(), loss='binary_crossentropy')
+        z =  Input(shape=(self.g_config["dims"][0],),tensor=z_tensor)
+        g_of_z = self.g_model(z)
+        c_out = self.c_freezed(g_of_z)
+        self.gan_model_tg = Model(inputs=z,outputs=c_out)
 
-    def build_critic_model(self):
+
+
+    def build_critic_model(self,z_tensor,real_tensor):
         """
         set up a model to train the discriminator
         :return: self.gan_model_tc
         """
         #### models to train descriminator###
         # noise input
-        z =  Input(shape=(self.g_input_dim,))
 
         # fake samples
+        z =  Input(shape=(self.g_config["dims"][0],),tensor=z_tensor)
         fake = self.g_freezed(z)
         # critic output for fake samples
         c_out_fake = self.c_model(fake)
         # real sample
-        real = Input(shape=(self.g_out_dim,))
+        real = Input(shape=(self.g_config["dims"][-1],),tensor=K.cast(real_tensor,dtype="float32"))
         # critic output for real samples
         c_out_real = self.c_model(real)
-
         self.gan_model_tc = Model(inputs=[z, real], outputs=[c_out_fake, c_out_real])
-        self.gan_model_tc.compile(optimizer=self.c_optimizer(), loss=['binary_crossentropy', 'binary_crossentropy'])
 
-    def build_model(self):
+
+    def compile_c(self):
+        self.gan_model_tc.compile(optimizer=self.c_config['optimizer'](), loss=[self.c_config['loss']['fake'] , self.c_config['loss']['real']])
+
+    def compile_g(self):
+        self.gan_model_tg.compile(optimizer=self.g_config['optimizer'](), loss=self.g_config['loss'])
+
+
+
+    def pre_train(self,n_pretrain):
+        fake_labels =  self.get_fake_labels(self.noise_sample_size)
+        real_labels =  self.get_real_labels(self.noise_sample_size)
+        for j in range(n_pretrain):
+                self.gan_model_tc.train_on_batch(x=None, y=[fake_labels, real_labels])
+
+    def train(self, n_train, n_c_train,n_pretrain=0):
+        fake_labels = self.get_fake_labels(self.noise_sample_size)
+        real_labels = self.get_real_labels(self.noise_sample_size)
+
+        for j in range(n_pretrain):
+            self.performance_log['critic'].append(
+                self.gan_model_tc.train_on_batch(x=None, y=[fake_labels, real_labels]))
+
+
+        for i in tqdm(range(n_train)):
+            for j in range(n_c_train):
+                self.performance_log['critic'].append(self.gan_model_tc.train_on_batch(x=None,y=[fake_labels, real_labels]))
+            self.performance_log['generator'].append(self.gan_model_tg.train_on_batch(x=None,y=real_labels))
+
+    def sample_fake(self, sample_size,noise_var=1):
         """
-        Put everything together to build the GAN
+        Samples from the generator
+        :param sample_size: number of generated samples
 
         """
-        # create generator and discriminator models
-        self.prepair()
-        # create a model to train generator
-        self.build_gan_model()
-        # create a model to train the critic
-        self.build_critic_model()
-
+        z = np.random.multivariate_normal(mean=np.zeros(shape=(self.g_config['dims'][0],)), cov=noise_var*np.eye(self.g_config['dims'][0],),
+                                          size=sample_size)
+        return self.g_model.predict(z)
 
     def get_loss(self, x):
         """
@@ -155,7 +271,9 @@ class GAN(object):
         :param sample_size: (int) number of real samples
         :return: lables for real samples
         """
-        return np.random.uniform(low=0.8, high=1.2, size=sample_size).reshape((sample_size, 1))
+        return np.ones((sample_size, 1), dtype=np.float32)
+
+        # return np.random.uniform(low=0.8, high=1.2, size=sample_size).reshape((sample_size, 1))
 
     @staticmethod
     def get_fake_labels(sample_size):
@@ -166,132 +284,4 @@ class GAN(object):
         """
         return np.zeros((sample_size, 1), dtype=np.float32)
 
-
-    def sample_fake(self, sample_size):
-        """
-        Samples from the generator
-        :param sample_size: number of generated samples
-
-        """
-        z = np.random.multivariate_normal(mean=np.zeros(shape=(self.g_input_dim,)), cov=np.eye(self.g_input_dim),
-                                          size=sample_size)
-        return self.g_model.predict(z)
-
-    def train_critic(self, n_steps=5):
-        """
-        Train the discriminator
-        :param n_steps: number of training steps
-        """
-        # produce lables for the fake samples
-        fake_labels = self.get_fake_labels(self.sample_size)
-        for i in range(n_steps):
-            #
-            z = np.random.multivariate_normal(mean=np.zeros(shape=(self.g_input_dim,)), cov=np.eye(self.g_input_dim),
-                                              size=self.sample_size)
-            real_samples = self.sample_real(self.sample_size)
-            real_labels = self.get_real_labels(self.sample_size)
-            self.performance_log['critic'].append(
-                self.gan_model_tc.train_on_batch([z, real_samples], [fake_labels, real_labels]))
-
-    def train_generator(self):
-        z = np.random.multivariate_normal(mean=np.zeros(shape=(self.g_input_dim,)), cov=np.eye(self.g_input_dim),
-                                          size=self.sample_size)
-        self.performance_log['generator'].append(
-            self.gan_model_tg.train_on_batch(z, np.ones(shape=(self.sample_size, 1))))
-
-    def train(self, n_train=100, n_c_pretrain=100, n_c_train_perit=1, n_c_train_perinterval=0, c_train_interval=100):
-        self.train_critic(n_c_pretrain)
-        for i in tqdm(range(n_train)):
-            if i % c_train_interval == 0:
-                self.train_critic(n_c_train_perinterval)
-            self.train_critic(n_c_train_perit)
-            self.train_generator()
-
-
-class WGAN_gp(GAN):
-
-    def __init__(self, g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim, c_num_hidden, c_hidden_dim, sample_size=64,
-                 mode='bayes_by_gaussian_dropout'):
-        self.RandomWeightedAverage = partial(RandomWeightedAverage, sample_size=sample_size)
-        super().__init__(g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim, c_num_hidden, c_hidden_dim, sample_size,
-                         mode)
-
-
-    def build_critic(self,):
-        dropout_rate = 0.1
-        x = Input(shape=(self.g_out_dim,))
-        h = Hidden(ltype=LAYER_TYPES['basic'], kernel_regularizer =(lambda : l1_l2(1e-5, 1e-5)), batch_norm=False, dropout_rate=dropout_rate)(inputs=x, dims=[self.c_hidden_dim] * self.c_num_hidden, name_prefix ='C_h')
-        output = Dense(1, name='C_out')(h)
-        return Model(inputs=x, outputs=output, name="C")
-
-    def build_gan_model(self):
-        ### model to train generator###
-        self.gan_model_tg = Sequential([self.g_model, self.c_freezed])
-        self.gan_model_tg.compile(optimizer=self.g_optimizer(), loss=Wasserestein_loss)
-
-    def build_critic_model(self):
-        # noise input
-        z = Input(shape=(self.g_input_dim,))
-        # fake samples
-        fake = self.g_freezed(z)
-        # critic output for fake samples
-        c_out_fake = self.c_model(fake)
-        # real sample
-        real = Input(shape=(self.g_out_dim,))
-        # critic output for real samples
-        c_out_real = self.c_model(real)
-
-        averaged_samples = Lambda(self.RandomWeightedAverage)([real, fake])
-        # We then run these samples through the discriminator as well. Note that we never really use the discriminator
-        # output for these samples - we're only running them to get the gradient norm for the gradient penalty loss.
-        averaged_samples_out = self.c_model(averaged_samples)
-
-        # The gradient penalty loss function requires the input averaged samples to get gradients. However,
-        # Keras loss functions can only have two arguments, y_true and y_pred. We get around this by making a partial()
-        # of the function with the averaged samples here.
-        GRADIENT_PENALTY_WEIGHT = 10
-        partial_gp_loss = partial(gradient_penalty_loss,
-                                  averaged_samples=averaged_samples,
-                                  gradient_penalty_weight=GRADIENT_PENALTY_WEIGHT)
-        partial_gp_loss.__name__ = 'gradient_penalty'  # Functions need names or Keras will throw an error
-
-        self.gan_model_tc = Model(inputs=[z, real], outputs=[c_out_fake, c_out_real, averaged_samples_out])
-        self.gan_model_tc.compile(optimizer=self.c_optimizer(),
-                                  loss=[Wasserestein_loss, Wasserestein_loss, partial_gp_loss])
-
-    @staticmethod
-    def get_real_labels(sample_size):
-        return np.ones((sample_size, 1), dtype=np.float32)
-
-    @staticmethod
-    def get_fake_labels(sample_size):
-        return -np.ones((sample_size, 1), dtype=np.float32)
-
-    #     def sample_real(self,sample_size):
-    #         return np.random.multivariate_normal(mean=np.zeros(shape=(self.g_out_dim,)), cov=np.eye(self.g_out_dim), size=sample_size )
-
-    def train_critic(self, n_steps=5):
-        fake_labels = self.get_fake_labels(self.sample_size)
-        dummy_labels = np.zeros((self.sample_size, 1), dtype=np.float32)
-        for i in range(n_steps):
-            z = np.random.multivariate_normal(mean=np.zeros(shape=(self.g_input_dim,)), cov=np.eye(self.g_input_dim),
-                                              size=self.sample_size)
-            real_samples = self.sample_real(self.sample_size)
-            real_labels = self.get_real_labels(self.sample_size)
-            self.performance_log['critic'].append(
-                self.gan_model_tc.train_on_batch([z, real_samples], [fake_labels, real_labels, dummy_labels]))
-
-    def train_generator(self):
-        z = np.random.multivariate_normal(mean=np.zeros(shape=(self.g_input_dim,)), cov=np.eye(self.g_input_dim),
-                                          size=self.sample_size)
-        self.performance_log['generator'].append(
-            self.gan_model_tg.train_on_batch(z, self.get_real_labels(self.sample_size)))
-
-    def train(self, n_train=100, n_c_pretrain=100, n_c_train_perit=1, n_c_train_perinterval=10, c_train_interval=100):
-        self.train_critic(n_c_pretrain)
-        for i in tqdm(range(n_train)):
-            if i % c_train_interval == 0:
-                self.train_critic(n_c_train_perinterval)
-            self.train_critic(n_c_train_perit)
-            self.train_generator()
 

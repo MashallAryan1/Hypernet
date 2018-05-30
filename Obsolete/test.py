@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap, Normalize
-from hypernets import *
+from matplotlib.colors import LinearSegmentedColormap
+from Obsolete.hypernets import *
 import os
 from tensorflow import set_random_seed
 set_random_seed(2)
@@ -33,12 +33,13 @@ def _sample_real(size):
     return image_batch
 
 
-modes= ['basic', 'deep_implicit', 'bayes_by_gaussian_dropout','deepst_n_gaussian']
-# modes= ['bayes_by_gaussian_dropout',]
+# modes= ['dense', 'deep_implicit', 'bayes_by_gaussian_dropout','deepst_n_gaussian']
+modes= ['dense',]
 
 
 
-models = [GAN, WGAN_gp]
+# models = [GAN, WGAN_gp]
+models = [GAN]
 
 # models = [EEGAN, EEWGAN_gp]
 
@@ -58,15 +59,15 @@ n_train = 200
 def run(directory, model_type , num_hidden,mode):
     if not os.path.exists(directory):
         os.makedirs(directory)
-    gan = model_type( g_input_dim = 2, g_num_hidden= num_hidden, g_hidden_dim = 20, g_out_dim = 2 , c_num_hidden =num_hidden, c_hidden_dim=10 ,sample_size= 64, mode=mode)
+    gan = model_type( g_input_dim = 2, g_num_hidden= num_hidden, g_hidden_dim = 20, g_out_dim = 2 , c_num_hidden =num_hidden, c_hidden_dim=100 ,sample_size= 64, mode=mode)
     gan.sample_real = _sample_real
     # gan = model_type( g_input_dim = 2, g_num_hidden= num_hidden, g_hidden_dim = 20, g_out_dim = 2 , c_num_hidden =num_hidden, c_hidden_dim=20,e_num_hidden= num_hidden//2, e_hidden_dim = 10 ,sample_size= 64, mode=mode)
 
-    for iii in range(50):
+    for iii in range(100):
         n_c_pretrain=10
         if iii == 0:
             n_c_pretrain=100
-        gan.train(n_train=n_train, n_c_pretrain=n_c_pretrain, n_c_train_perit=10, n_c_train_perinterval =50, c_train_interval = 500 )
+        gan.train(n_train=n_train, n_c_pretrain=n_c_pretrain, n_c_train_perit=15, n_c_train_perinterval =50, c_train_interval = 500 )
 
         f =gan.sample_fake(8*400)
         r =gan.sample_real(400)

@@ -1,23 +1,23 @@
 import matplotlib.pyplot as plt
-from hypernets import *
+from Obsolete.hypernets import *
 import os
 import numpy as np
 from tensorflow import set_random_seed
-set_random_seed(2)
+set_random_seed(4)
 from numpy.random import seed
 from sklearn.preprocessing import  StandardScaler
-seed(1)
-# modes= ['basic', 'deep_implicit', 'bayes_by_gaussian_dropout']
-modes= ['deep_implicit','bayes_by_gaussian_dropout', 'basic','deepst_n_gaussian']
-models = [ Hyper_Net_GAN,Hyper_Net_WGAN,]
-# modes= ['deep_implicit',]
+seed(3)
+# modes= ['dense', 'deep_implicit', 'bayes_by_gaussian_dropout']
+# modes= ['deep_implicit','bayes_by_gaussian_dropout', 'basic','deepst_n_gaussian']
+models = [ Hyper_Net_GAN]#,Hyper_Net_WGAN,]
+modes= ['dense','deep_implicit']
 # models = [ Hyper_Net_WGAN,]
 
 #
 
 size=100
 sample_size = 64
-n_train = 500
+n_train = 1000
 left,right = 0, 30
 
 # z_dim = 15
@@ -27,7 +27,6 @@ left,right = 0, 30
 
 xxx = np.linspace(left,right,500).reshape((500,1))
 yyy= np.sin(xxx)
-
 main_net_config ={}
 main_net_config['units'] = [1,10,1]
 main_net_config['activation'] = 'tanh'
@@ -44,39 +43,38 @@ main_net_config['output_activation'] = None
 #     os.makedirs(directory)
 
 # z = np.random.multivariate_normal(mean=np.zeros(shape=(input_dim,)), cov=np.eye(input_dim), size=size )
-def run(model_type, funct, mode, num_hidden, z_dim,x,y):
+def run(model_type, funct, mode, num_hidden, z_dim,x,y,points):
     g_out_dim = weights_dim(main_net_config['units'])
     g_h_dim= 10 * g_out_dim
-    gan = model_type(main_net_config, g_input_dim= z_dim, g_num_hidden=num_hidden//2, g_hidden_dim=g_h_dim,
-                        c_num_hidden=num_hidden, c_hidden_dim=g_out_dim*2//3, sample_size=sample_size, mode= mode)
+    gan = model_type(main_net_config, g_input_dim= z_dim, g_num_hidden=num_hidden, g_hidden_dim=g_h_dim,
+                        c_num_hidden=num_hidden, c_hidden_dim=g_out_dim*5, sample_size=sample_size, mode= mode)
     gan.sample_real = (lambda sample_size: np.random.multivariate_normal(mean=np.zeros(shape=(g_out_dim,)), cov=np.eye(g_out_dim), size=sample_size ))
 
-
     gan.build_model()
-    directory = './picture1/'+str(funct)+"/"+model_type.__name__+'_'+mode+str(num_hidden)+"_"+str(z_dim)
+    directory = "./picture1/"+ str(funct) + "/"+ model_type.__name__+ "_" + mode + str(num_hidden)+"_"+str(z_dim)+"_"+str(points)+"_50_500"
     if not os.path.exists(directory):
         os.makedirs(directory)
 
     z = np.random.multivariate_normal(mean=np.zeros(shape=(z_dim,)), cov=np.eye(z_dim), size=size)
-    z1 = np.random.multivariate_normal(mean=np.zeros(shape=(z_dim,)), cov=2*np.eye(z_dim), size=size)
+    # z1 = np.random.multivariate_normal(mean=np.zeros(shape=(z_dim,)), cov=2.0*np.eye(z_dim), size=size)
 
 
     scaler = StandardScaler()
     x_= scaler.fit_transform(x)
-    for iii in range(10):
+    for iii in range(20):
         n_c_pretrain=20
         if iii == 0:
             n_c_pretrain=100
-        gan.train(x_, y, n_train=n_train,  n_c_pretrain= n_c_pretrain ,n_c_train_perit=20, n_c_train_perinterval = 50, c_train_interval = 300)
+        gan.train(x_, y, n_train=n_train,  n_c_pretrain=n_c_pretrain ,n_c_train_perit=5, n_c_train_perinterval=10, c_train_interval=500)
         xx = scaler.transform(xxx)
-        t=gan.predict(xx, z)
-        t1=gan.predict(xx, z1)
+        t = gan.predict(xx, z)
+        # t1 = gan.predict(xx, z1)
         fig=plt.figure()
     #     plt.ylim(-2,2)
         plt.xlim(left,right)
         for i in range(size):
-            plt.plot(xxx,t[i,:],color='b', alpha=0.3)
-            plt.plot(xxx, t1[i, :], color='red', alpha=0.1)
+            # plt.plot(xxx, t1[i, :], color='red', alpha=0.1)
+            plt.plot(xxx,t[i,:],color='b', alpha=0.2)
         plt.plot(xxx,yyy, color='r')
         plt.plot(x,y, 'ro')
     #     plt.xlabel('GAN after {} epochs'.format((iii+1)*500))
@@ -89,18 +87,19 @@ def run(model_type, funct, mode, num_hidden, z_dim,x,y):
 
 #
 # num_hiddens = [8,]
-num_hiddens = [3,5,8]
+num_hiddens = [5]#[3,5,8]
 
-z_dims = [5,10,]
+z_dims = [5]#[2,5,10,]
 # z_dims = [10,]
-
-for funct in range(3):
-    x = np.random.uniform(left+10,right-10, 6).reshape((6, 1))  # np.linspace(-1,10,6).reshape((6,1))
-    y = np.sin(x)
-    for num_hidden in num_hiddens:
-        for z_dim in z_dims:
-            for mode in modes:
-                        for model_type in models:
-                            run(model_type, funct, mode, num_hidden, z_dim,x,y)
-                            print("==")
+n_points = 20
+for points in range(5,n_points,2):
+    for funct in range(10):
+        x = np.random.uniform(left+10,right-10, points).reshape((points, 1))  # np.linspace(-1,10,6).reshape((6,1))
+        y = np.sin(x)
+        for num_hidden in num_hiddens:
+            for z_dim in z_dims:
+                for mode in modes:
+                            for model_type in models:
+                                run(model_type, funct, mode, num_hidden, z_dim,x,y,points)
+                                print("==")
 

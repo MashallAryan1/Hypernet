@@ -1,13 +1,10 @@
-from generative_models import *
-from keras.layers import Dense, LeakyReLU, Activation
-from keras.layers import Input, Activation, BatchNormalization, Lambda, Dropout, Concatenate, Reshape, Dot , Concatenate, Add
-from keras.models import Sequential, Model
-from keras.optimizers import Adam
+from Obsolete.generative_models import *
+from keras.layers import Input, Reshape, Dot , Add
+from keras.models import Model
 from keras.regularizers import l1_l2
-from keras.losses import binary_crossentropy, mean_squared_error
+from keras.losses import mean_squared_error
 from tqdm import tqdm
 from utils import *
-from functools import partial
 
 
 def build_main_net(w=None, x=None, config=None):
@@ -69,8 +66,8 @@ class Hyper_Net_GAN(GAN):
         self.gan_model_pred = Model(inputs=[z_, x], outputs=y)
         self.gan_model_tg = Model(inputs=[z_, x], outputs=[c_out, y])
         self.gan_model_tg.compile(optimizer=self.g_optimizer(),
-                                  loss={'C_freezed': 'binary_crossentropy', 'M': neloglik_normal},
-                                  loss_weights={'C_freezed': 0.5, 'M': 0.5})
+                                  loss={'C_freezed': generator_loss_logit, 'M': neloglik_normal},
+                                  loss_weights={'C_freezed': 0.1, 'M': 1.0})
 
     #     def build_critic_model(self):
     #         #### models to train descriminator###
@@ -92,8 +89,9 @@ class Hyper_Net_GAN(GAN):
     #         super().build_model()
 
     def train_generator(self, x, y):
-        z = np.random.multivariate_normal(mean=np.zeros(shape=(self.g_input_dim,)), cov=np.eye(self.g_input_dim),
-                                          size=self.sample_size)
+        # z = np.random.multivariate_normal(mean=np.zeros(shape=(self.g_input_dim,)), cov=np.eye(self.g_input_dim),
+        #                                   size=self.sample_size)
+        z = np.random.uniform(low=-1,high=1, size=(self.sample_size,self.g_input_dim))
         self.performance_log['generator'].append(
             self.gan_model_tg.train_on_batch({'g_in': z, 'net_in': x}, [self.get_real_labels(self.sample_size), y]))
 
@@ -109,13 +107,8 @@ class Hyper_Net_GAN(GAN):
             if i % c_train_interval == 0:
                 self.train_critic(n_c_train_perinterval)
             self.train_critic(n_c_train_perit)
-            # select = np.random.choice(x.shape[0],x.shape[0]//2)
-            # print(select)
-            # print(x[select,:])
-            xx = x#[select,:]
-            yy = y#[select,:]
-            xx = np.tile(xx, (self.sample_size, 1)).reshape((self.sample_size, *xx.shape))
-            yy = np.tile(yy, (self.sample_size, 1)).reshape((self.sample_size, *yy.shape))
+            xx = np.tile(x, (self.sample_size, 1)).reshape((self.sample_size, *x.shape))
+            yy = np.tile(y, (self.sample_size, 1)).reshape((self.sample_size, *y.shape))
 
             self.train_generator(xx, yy)
 
@@ -153,8 +146,8 @@ class Hyper_Net_WGAN(WGAN_gp):
         self.gan_model_pred = Model(inputs=[z_, x], outputs=y)
         self.gan_model_tg = Model(inputs=[z_, x], outputs=[c_out, y])
         self.gan_model_tg.compile(optimizer=self.g_optimizer(),
-                                  loss={'C_freezed': Wasserestein_loss, 'M': neloglik_normal},
-                                  loss_weights={'C_freezed': 0.5, 'M': 0.5})
+                                  loss={'C_freezed': Wasserestein_loss, 'M':neloglik_normal},
+                                  loss_weights={'C_freezed': 1.0, 'M': 1.0})
 
     #     def build_model(self):
     #         super().build_model()
@@ -197,39 +190,11 @@ class Hyper_Net_WGAN(WGAN_gp):
         return self.gan_model_pred.predict([z, X])
 
 
-class  EEGAN(GAN):
-
-    def __init__(self,g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim, c_num_hidden, c_hidden_dim, e_num_hidden,
-                 e_hidden_dim, sample_size=64,  mode='bayes_by_gaussian_dropout'):
-        super(EEGAN, self).__init__(g_input_dim, g_num_hidden, g_hidden_dim, g_out_dim, c_num_hidden,
-                                    c_hidden_dim, sample_size,mode)
-
-        self.e_num_hidden, self.e_hidden_dim = e_num_hidden, e_hidden_dim
-
-    def encoder(self):
-        x = Input(shape=(self.g_out_dim,))
-        h= Hidden(ltype=LAYER_TYPES[self.mode], kernel_regularizer=(lambda: l1_l2(1e-5, 1e-5)), batch_norm=True)(inputs=x, dims=[self.c_hidden_dim] * self.c_num_hidden, name_prefix='E_h')
-        z = Dense(self.g_out_dim, name='e_out')(h)
-        return Model(inputs=x,outputs=z)
 
 
-    def build_gan_model(self):
-        ### model to train generator###
-        encoder = self.encoder()
-        ### model to train generator###
-        z = Input(shape=(self.g_input_dim,), name='g_in')
-        x = self.g_model(z)
-        z_prime = encoder(x)
 
-        c_out = self.c_freezed(x)
-        self.gan_model_tg = Model(inputs=[z], outputs=[c_out])
 
-        def eegan_loss(y_true,y_pred):
-            prior = binary_crossentropy(y_true,y_pred)
-            reconstruction = 0.5* mean_squared_error(z,z_prime)
-            return prior+reconstruction
 
-        self.gan_model_tg.compile(optimizer=self.g_optimizer(), loss=eegan_loss)
 
 class EEWGAN_gp(WGAN_gp):
 
