@@ -38,7 +38,7 @@ class Network(object):
                 continue
 
             # hidden layers
-            h = Dense(dim, kernel_regularizer=self.kernel_regularizer(),
+            h = Dense(dim,  kernel_regularizer=self.kernel_regularizer(),
                       name=name_prefix + '_{}'.format(i))(h)
             if self.batch_norm:
                 h = BatchNormalization(name=name_prefix + '_BtNorm_{}'.format(i))(h)
@@ -46,7 +46,7 @@ class Network(object):
             if self.dropout_rate > 0:
                 h = Dropout(self.dropout_rate)(h)
         # output layer
-        out = Dense(dims[-1], kernel_regularizer=self.kernel_regularizer(),
+        out = Dense(dims[-1],  kernel_regularizer=self.kernel_regularizer(),
                     name=name_prefix + '_{}'.format(len(dims)))(h)
         if  self.output_activation is not None:
             out = transfer(self.output_activation, out)
@@ -58,14 +58,16 @@ class Network(object):
         for i, dim in enumerate(dims[1:-1]):
             rand = not rand
             if i == 0:
-                h = Dense(dim, kernel_regularizer=self.kernel_regularizer(), name=name_prefix + '_{}'.format(i))(inputs)
+                h = Dense(dim,
+                 kernel_regularizer=self.kernel_regularizer(), name=name_prefix + '_{}'.format(i))(inputs)
                 if self.batch_norm:
                     h = BatchNormalization()(h)
                 h = transfer(self.activation, h)
                 continue
             if rand:
                 h = Lambda(lambda x: K.concatenate([x, K.random_normal(shape=K.shape(x), mean=0, stddev=epsilon_stddev)]))(h)
-            h = Dense(dim, kernel_regularizer=self.kernel_regularizer(), name=name_prefix + '_{}'.format(i))(h)
+            h = Dense(dim,
+                 kernel_regularizer=self.kernel_regularizer(), name=name_prefix + '_{}'.format(i))(h)
             if self.batch_norm:
                 h = BatchNormalization()(h)
             h = transfer(self.activation, h)
@@ -111,7 +113,7 @@ class GAN(object):
         self.c_config = c_config
         assert (self.c_config['dims'][0] == self.g_config['dims'][-1])
         self.noise_sample_size = noise_sample_size
-        self.real_samples = real_samples.sample(self.noise_sample_size)
+        self.real_samples = real_samples
         if self.real_samples is None:
             self.real_samples = K.random_normal(shape=(self.noise_sample_size, self.c_config["dims"][0]), mean=0.0, stddev=1.0)
 
@@ -157,8 +159,6 @@ class GAN(object):
         # non-trainable critic
         self.c_freezed = Sequential([critic], name="C_freezed")
         self.c_freezed.trainable = False
-
-
 
     def noise(self):
         return K.random_normal((self.noise_sample_size, self.g_config['dims'][0]))
@@ -208,11 +208,11 @@ class GAN(object):
 
         # fake samples
         z =  Input(shape=(self.g_config["dims"][0],),tensor=z_tensor)
-        fake = self.g_freezed(z)
+        self.fake = self.g_freezed(z)
         # critic output for fake samples
-        c_out_fake = self.c_model(fake)
+        c_out_fake = self.c_model(self.fake)
         # real sample
-        real = Input(shape=(self.g_config["dims"][-1],),tensor=K.cast(real_tensor,dtype="float32"))
+        real = Input(shape=(self.g_config["dims"][-1],), tensor=K.cast(real_tensor,dtype="float32"))
         # critic output for real samples
         c_out_real = self.c_model(real)
         self.gan_model_tc = Model(inputs=[z, real], outputs=[c_out_fake, c_out_real])

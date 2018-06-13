@@ -21,7 +21,6 @@ def sampling(args, dim,epsilon_std):
     return z_mean + K.exp(z_log_var / 2) * epsilon
 
 
-
 def get_weight_indices(units):
 
     indices, w_counter = [], 0
@@ -50,10 +49,12 @@ def weights_dim(units):
 
 
 def wasserestein_real(y_true, y_pred):
-    return K.mean(y_pred)
+    return -K.mean(y_pred)
+
 
 def wasserestein_fake(y_true, y_pred):
-    return  -K.mean(y_pred)
+    return  K.mean(y_pred)
+
 
 def gradient_penalty_loss(y_true, y_pred, averaged_samples, gradient_penalty_weight):
     gradients = K.gradients(y_pred, averaged_samples)[0]
@@ -75,26 +76,29 @@ def RandomWeightedAverage(inputs, sample_size):
     return (weights * inputs[0]) + ((1 - weights) * inputs[1])
 
 
-
-
 def binary_crossentropy_from_logit(y_true, y_pred):
     return K.mean( keras.losses.binary_crossentropy(y_true, K.sigmoid(y_pred)))
+
 
 def generator_loss_logit(y_true, y_pred):
     return -K.mean( y_pred, axis=-1)
 
+
 def hing_real(y_true, y_pred):
     return K.mean( K.maximum(K.zeros_like(y_true),K.ones_like(y_pred)- y_pred))
+
+
 def hing_fake(y_true, y_pred):
     return K.mean( K.maximum(K.zeros_like(y_true),K.ones_like(y_pred)+ y_pred))
 
 def square_hing_real(y_true, y_pred):
     return K.mean(K.square( K.maximum(K.zeros_like(y_true),K.ones_like(y_pred)- y_pred)))
+
 def square_hing_fake(y_true, y_pred):
     return K.mean(K.square( K.maximum(K.zeros_like(y_true),K.ones_like(y_pred)+ y_pred)))
 
 
-
 def main_net_neg_loglikelihood(y_true, y_pred):
-    # return -K.mean(dist.log_prob(y_pred- y_true ))
-    return K.mean(K.square(y_pred - y_true))
+    return -K.mean(tf.contrib.distributions.Normal(loc=0.0, scale=1.00).log_prob(y_pred- y_true))
+
+    # return K.mean(K.square(y_pred - y_true))
